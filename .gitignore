@@ -1,5 +1,6 @@
 entradas/swiid9_8/recursos/
 entradas/wid_all_data/
+entradas/world-bank/
 entradas/wid_all_data/*.csv
 *.rds
 *.RData
