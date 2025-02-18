@@ -3,3 +3,4 @@ entradas/wid_all_data/
 entradas/wid_all_data/*.csv
 *.rds
 *.RData
+*.Rhistory
