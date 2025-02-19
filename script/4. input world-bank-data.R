@@ -47,3 +47,9 @@ ggplot(income_share_max_year_sa, aes(x = Decile,
         plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
         axis.title = element_text(size = 12),
         axis.text = element_text(size = 10))
+
+# Filtering by uruguay and saving the data
+
+income_share_max_year_sa %>%
+  filter(Country == "Uruguay") %>%
+  saveRDS("./intermediarios/income_share_accumulated_uruguay.rds")
