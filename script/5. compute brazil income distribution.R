@@ -42,7 +42,8 @@ income_share_accumu_brazil <- lorenz_curve %>%
   mutate(Decile = Decile * 10,
          IncomeShare = income * 100 / sum(income),
          Country = "Brasil",
-         Year = 2023) %>%
+         Year = 2023,
+         IncomeShareAccumulated = IncomeShareAccumulated*100) %>%
   select(Country, Year, Decile, IncomeShare, IncomeShareAccumulated)
 
 saveRDS(income_share_accumu_brazil,
