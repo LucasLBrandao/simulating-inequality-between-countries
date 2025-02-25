@@ -2,14 +2,15 @@
 library(survey)
 library(dplyr)
 library(Hmisc)  # for weighted quantiles if needed
-
+library(ineq)
+library(acid)
 set.seed(123)  # For reproducibility
 
 # ========= 1. Extract Data and Compute Original Mean =========
 # Convert the survey design object to a data.frame and extract weights
 brazil_income_data  <- readRDS("./intermediarios/renda_PNADc_brasil2023visita_1.rds")
 df <- brazil_income_data$variables
-
+ordered_brazil_weights  <-  df  %>%  arrange(VD5008_DEF) %>% .$V1032
 # Compute the original (weighted) mean income of Brazil
 mean_income <- as.numeric(svymean(~VD5008_DEF, brazil_income_data, na.rm = TRUE))
 
@@ -26,18 +27,30 @@ uruguay_decile_shares[10] <- 1
 
 # Define the optimization function
 objective_function <- function(sigma) {
+  # A função abaixo é derivada da MGF (Moment generating function) do t=1 de uma lognormal
+  # ela foi derivada igualando a renda média do Brasil (mean_income) ao valor esperado da distribuição lognormal
+  # e isolando o parametro mu.
+  # essa função buscará o valor de sigma que a partir dessa primeira equação...
+  # minimizará a diferença entre a distribuição obtida e a distribuição do uruguai
   mu <- log(mean_income) - (sigma^2) / 2
 
-  # Simulate a large sample from the candidate lognormal distribution
-  sim_sample <- rlnorm(100000, meanlog = mu, sdlog = sigma)
 
-  # Calculate cumulative decile shares
+  # Após obter o mu, é criada uma amostra de 383.049 valores aleatórios que sigam a distribuição lognormal
+  # com os parâmetros obtidos, e que replique os pesos da amostra do brasil, na ordem por renda.
+  sim_sample <- rlnorm(383049, meanlog = mu, sdlog = sigma)  %>% sort()
+  weight_sample  <- ordered_brazil_weights
+  sample <- data.frame(sim_sample, weight_sample)
+
+
+  # com os valores aleatórios obtidos, é calculado então o percentil de cada decil e o total da renda, para assim calcular
+  # a participação acumulada de cada decil na renda total.
   p <- seq(0, 1, by = 0.1)
-  decile_breaks <- quantile(sim_sample, probs = p)
-  total_income <- sum(sim_sample)
+  decile_breaks <- wtd.quantile(sample$sim_sample, weights = sample$weight_sample, probs = p, type = "quantile")
+  total_income <- sum(sample$sim_sample * sample$weight_sample)
 
   cum_income_shares <- sapply(2:length(decile_breaks), function(i) {
-    sum(sim_sample[sim_sample <= decile_breaks[i]]) / total_income
+  sum(sample$sim_sample[sample$sim_sample <= decile_breaks[i]] *
+  sample$weight_sample[sample$sim_sample <= decile_breaks[i]]) / total_income
   })
 
   # Theoretical cumulative decile shares (excluding 0%)
@@ -47,7 +60,9 @@ objective_function <- function(sigma) {
   error_shares <- sum((theoretical_cum_shares - uruguay_decile_shares)^2)
 
   # Theoretical Gini
-  theoretical_gini <- 2 * pnorm(sigma / sqrt(2)) - 1
+  theoretical_gini <- weighted.gini(x = sample$sim_sample, w = sample$weight_sample)$Gini
+
+  # Compute the error for the Gini
   error_gini <- (theoretical_gini - uruguai_gini_index)^2
 
   # Total loss function (weights can be adjusted if needed)
