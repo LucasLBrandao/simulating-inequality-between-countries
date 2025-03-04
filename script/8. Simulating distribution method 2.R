@@ -213,9 +213,11 @@ last_points <- both_lorenz %>%
   filter(cumulative_population == max(cumulative_population))
 
 library(ggrepel)
-
+source("./script/0. tema ggplot.R")
 # Create the Lorenz curve plot
 options(vsc.dev.args = list(width=1500, height=1500, pointsize=12, res=300))
+png(filename = "./saidas/Comparação renda compartilhada Brasil, Brasil ajustado e Uruguai.png",width=1500, height=1500, pointsize=12, res=300)
+
 ggplot(both_lorenz, aes(x = cumulative_population, y = cumulative_income, color = renda)) +
   geom_line(size = 1, alpha = 0.5) +
   # Direct labeling using the last point of each curve
@@ -229,12 +231,15 @@ ggplot(both_lorenz, aes(x = cumulative_population, y = cumulative_income, color 
   scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
   scale_color_brewer(palette = "Set1") +
   theme_minimal(base_size = 12) +
-  theme(legend.position = "top",  # legend removed in favor of direct labeling
-        plot.title = element_text(face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(hjust = 0.5),
+  theme_swd()+
+  theme(
+        legend.position = "top",  # legend removed in favor of direct labeling
+        legend.justification='left',
+        #plot.title = element_text(face = "bold", hjust = 0.5),
+        #plot.subtitle = element_text(hjust = 0.5),
         axis.title.x = element_text(margin = margin(t = 10)),
         axis.title.y = element_text(margin = margin(r = 10)))
-
+dev.off()
 # Display the plot
 
 # ======= 6. saving result ======
