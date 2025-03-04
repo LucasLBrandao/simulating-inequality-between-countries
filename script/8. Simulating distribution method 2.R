@@ -10,8 +10,8 @@ set.seed(123)  # For reproducibility
 # Convert the survey design object to a data.frame and extract weights
 brazil_data  <- readRDS("./intermediarios/renda_PNADc_brasil2023visita_1.rds")
 brazil_income_data <- subset(brazil_data, !is.na(VD5008_DEF))
-brazil_income_data  <- update(brazil_income_data,
-                              orig_order = 1:nrow(brazil_income_data$variables))
+brazil_income_data <- update(brazil_income_data,
+                              orig_order = seq_len(nrow(brazil_income_data$variables)))
 
 brazil_income_data_df <- brazil_income_data$variables
 
@@ -143,8 +143,100 @@ head(brazil_income_data_df_final%>% select(orig_order, VD5008_DEF,VD5008_DEF_adj
 
 brazil_income_data_adjusted <- update(brazil_income_data,
                                       VD5008_DEF_adjusted = brazil_income_data_df_final$VD5008_DEF_adjusted)
-# ========= 5. Validação do resultado
+# ========= 5. Validação dos resultados ----
 
-# ======= 7. saving result ======
+# 5.1 Renda média idêntica --------
+renda_media_brasil <- svymean(~VD5008_DEF,
+                             brazil_income_data_adjusted,
+                             na.rm = TRUE)
+
+renda_media_ajustada_brasil <- svymean(~VD5008_DEF_adjusted,
+                             brazil_income_data_adjusted,
+                             na.rm = TRUE)
+# 5.2 índice de Gini -------
+library(convey)
+
+brazil_income_data_adjusted <- convey_prep(brazil_income_data_adjusted)
+gini_index_renda <- svygini(~VD5008_DEF,
+                            design = brazil_income_data_adjusted,
+                            na.rm = TRUE)
+
+gini_index_renda_ajustada <- svygini(~VD5008_DEF_adjusted,
+                                     design = brazil_income_data_adjusted,
+                                     na.rm = TRUE)
+
+
+# 5.3 distribuição entre os decis ------
+
+# Helper function to compute Lorenz curve for a given income variable
+compute_lorenz <- function(var, label) {
+  # Create a formula for the survey functions
+  form <- as.formula(paste0("~", var))
+
+  # Compute deciles (quantiles)
+  quantiles <- svyquantile(form, brazil_income_data_adjusted, seq(0, 1, 0.1), na.rm = TRUE)
+  quantile_vec <- quantiles[[var]][, 1]
+
+  # Compute income share by decile groups
+  share <- svyby(form,
+                 as.formula(paste0("~cut(", var, ", breaks = unique(quantile_vec), include.lowest = TRUE)")),
+                 brazil_income_data_adjusted,
+                 svytotal)
+
+  # Calculate cumulative income and population
+  n <- nrow(share)
+  share %>%
+    mutate(cumulative_income = cumsum(.data[[var]]) / sum(.data[[var]]),
+           cumulative_population = seq(1/n, 1, length.out = n),
+           renda = label) %>%
+    select(cumulative_income,cumulative_population,renda)
+}
+
+# Compute Lorenz curves for the two income variables
+lorenz_curve          <- compute_lorenz("VD5008_DEF", "Brasil")
+adjusted_lorenz_curve <- compute_lorenz("VD5008_DEF_adjusted", "Brasil ajustado")
+
+# Load and adjust Uruguay's Lorenz curve data
+uruguai_lorenz_curve <- readRDS("./intermediarios/income_share_accumulated_uruguay.rds") %>%
+  mutate(cumulative_population = Decile / 10,
+         cumulative_income     = IncomeShareAccumulated / 100,
+         renda = "Uruguai") %>%
+  select(cumulative_population, cumulative_income,renda)
+
+# Combine all curves and plot them
+both_lorenz <- bind_rows(lorenz_curve, adjusted_lorenz_curve, uruguai_lorenz_curve)
+
+
+# Plotting the lorenz
+last_points <- both_lorenz %>%
+  group_by(renda) %>%
+  filter(cumulative_population == max(cumulative_population))
+
+library(ggrepel)
+
+# Create the Lorenz curve plot
+options(vsc.dev.args = list(width=1500, height=1500, pointsize=12, res=300))
+ggplot(both_lorenz, aes(x = cumulative_population, y = cumulative_income, color = renda)) +
+  geom_line(size = 1, alpha = 0.5) +
+  # Direct labeling using the last point of each curve
+  labs(title = "Comparação da Curva de Lorenz da renda",
+       subtitle = "Renda do Brasil, do Uruguai e Renda do Brasil com distribuição do uruguai",
+       col = "",
+       x = "População acumulada",
+       y = "Participação acumulada na renda",
+       caption = "Fontes: PNADc(2023) & Banco Mundial") +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",  # legend removed in favor of direct labeling
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.title.x = element_text(margin = margin(t = 10)),
+        axis.title.y = element_text(margin = margin(r = 10)))
+
+# Display the plot
+
+# ======= 6. saving result ======
 
 brazil_income_data_adjusted %>% saveRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_uruguai.rds")
