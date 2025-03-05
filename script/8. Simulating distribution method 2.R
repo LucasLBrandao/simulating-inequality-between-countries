@@ -143,6 +143,9 @@ head(brazil_income_data_df_final%>% select(orig_order, VD5008_DEF,VD5008_DEF_adj
 
 brazil_income_data_adjusted <- update(brazil_income_data,
                                       VD5008_DEF_adjusted = brazil_income_data_df_final$VD5008_DEF_adjusted)
+
+cat("Optimal sigma:", sigma_target, "\n")
+cat("Optimal mu:", mu_target, "\n")
 # ========= 5. Validação dos resultados ----
 
 # 5.1 Renda média idêntica --------

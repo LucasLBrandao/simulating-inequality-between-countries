@@ -97,12 +97,5 @@ p1 <- percentis_df %>%
      theme(panel.grid.major.x = element_line(size = 0.3,color = "#e8e7e7", linetype = "solid")) +
      scale_color_identity()
 save_plot(p1, "Variação por percentil - Renda e Renda Ajustada.png")
-# ========= 6. Output =========
-cat("Optimal sigma:", sigma_target, "\n")
-cat("Optimal mu:", mu_target, "\n")
-cat("Poverty line:", poverty_line, "\n")
-cat("Original poverty rate:", original_poverty_rate, "\n")
-cat("Adjusted poverty rate:", adjusted_poverty_rate, "\n")
-
 
 # Por Gênero e raça
