@@ -54,9 +54,9 @@ theme_minimal(base_size = 11) +
 }
 
 
-save_plot <- function(plot,title ,Width = 12,Height = 8,Pointsize = 12, Res = 300, Units = "in"){
+save_plot <- function(plot,title ,Width = 1700,Height = 1500,Pointsize = 12, Res = 300, Units = "px"){
 
-  png(file= paste0("./output/", title),
+  png(file= paste0("./saidas/", title),
       width = Width,
       height = Height,
       units = Units,
