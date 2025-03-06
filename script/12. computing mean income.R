@@ -137,7 +137,7 @@ income_results %>%
   filter(!Category_Value %in% c("","Homem ","Mulher ")) %>%
   mutate(Category_Value = if_else(Category_Value == "Overall", "Geral", Category_Value)) %>%
   mutate(Category_Value = fct_relevel(Category_Value, "Geral") %>% fct_rev())  %>%
-  saveRDS("./intermediarios/poverty_results.rds")
+  saveRDS("./intermediarios/income_results.rds")
 
 ### VERIFICATION: Ensure No Missing or Unexpected Values
 check_results <- function(results_df) {
