@@ -28,13 +28,15 @@ mean_income <- as.numeric(svymean(~VD5008_DEF, brazil_income_data, na.rm = TRUE)
 # Inverting, we obtain:
 #   sigma_target = sqrt(2) * qnorm((G + 1)/2)
 
-uruguai_gini_index <- 0.406
-uruguay_income_share <- readRDS("./intermediarios/income_share_accumulated_uruguay.rds")
-uruguay_decile_shares  <- uruguay_income_share$IncomeShareAccumulated/100
-uruguay_decile_shares[10] <- 1
+gini_indexes  <- fread("./entradas/world-bank/gini_paises_selecionados.csv")
 
-# Define the optimization function
-objective_function <- function(sigma) {
+countries_income_share <- readRDS("./intermediarios/income_share_accumulated_countries_sample.rds")
+
+countries_income_share$IncomeShareAccumulated  <- countries_income_share$IncomeShareAccumulated/100
+
+# Função que ajusta a distribuição lognormal para os dados de um país
+fit_log_normal <- function(country_decile_shares, country_gini_index,country_name) {
+  objective_function <- function(sigma) {
   # A função abaixo é derivada da MGF (Moment generating function) do t=1 de uma lognormal
   # ela foi derivada igualando a renda média do Brasil (mean_income) ao valor esperado da distribuição lognormal
   # e isolando o parametro mu.
@@ -66,38 +68,73 @@ objective_function <- function(sigma) {
 
   # depois de calcular a participação acumulada na renda teórica,
   # o valor obtido é comparado com a distribuicao do paraguai
-  error_shares <- sum((theoretical_cum_shares - uruguay_decile_shares)^2)
+  error_shares <- sum((theoretical_cum_shares - country_decile_shares)^2)
 
   # Theoretical Gini
   # a partir dos valores teóricos obtidos calcula-se o gini teórico tambem
   theoretical_gini <- weighted.gini(x = sample$sim_sample, w = sample$weight_sample)$Gini
 
   # e é computado o erro, comparando com o erro do uruguay
-  error_gini <- (theoretical_gini - uruguai_gini_index)^2
+  error_gini <- (theoretical_gini - country_gini_index)^2
 
   # Total loss function (weights can be adjusted if needed)
   # calcula-se entao o erro compartilhado
   return(error_shares + error_gini)
+    }
+    # Optimize sigma
+
+    # calcula-se um sigma inicial com base no gini do uruguai
+    initial_sigma <- sqrt(2) * qnorm((country_gini_index + 1) / 2)
+
+    # utiliza-se a funcao optim para encontrar o sigma que minimiza o erro da função acima
+    opt_result <- optim(par = initial_sigma, fn = objective_function, method = "BFGS")
+
+    # extrai o sigma do resultado
+    sigma_target <- opt_result$par
+
+    # calcula o mu a partir do sigma obtido
+    mu_target <- log(mean_income) - (sigma_target^2) / 2
+
+    # Define the target quantile function based on these parameters.
+    target_quantile <- function(q) {
+      exp(mu_target + sigma_target * qnorm(q))
+    }
+
+  func_name <- paste0("target_quantile_", gsub("[^a-zA-Z0-9]", "_", tolower(country_name)))
+  assign(func_name, target_quantile, envir = .GlobalEnv)
+
+    return(list(
+    country = country_name,
+    mu = mu_target,
+    sigma = sigma_target
+  ))
+
 }
 
-# Optimize sigma
+# Obtendo as target functions for each countries
+country_name  <- "Estados Unidos"
+for (country_name in unique(countries_income_share$Country)) {
+    cat("Processing country:", country_name, "\n")
 
-# calcula-se um sigma inicial com base no gini do uruguai
-initial_sigma <- sqrt(2) * qnorm((uruguai_gini_index + 1) / 2)
+    gini_country  <- gini_indexes %>% filter(pais == country_name) %>% pull(gini)
+    deciles_shares_country  <- countries_income_share %>%
+                                  filter(Country == country_name) %>%
+                                  pull(IncomeShareAccumulated)
+    deciles_shares_country[10] <- 1
 
-# utiliza-se a funcao optim para encontrar o sigma que minimiza o erro da função acima
-opt_result <- optim(par = initial_sigma, fn = objective_function, method = "BFGS")
+    # Create target quantile function for this country
+    result <- create_target_quantile_function(
+      country_name = country_name,
+      country_decile_shares = deciles_shares_country,
+      country_gini_index = gini_country,
+      )
 
-# extrai o sigma do resultado
-sigma_target <- opt_result$par
+    # Store result
+    results[[country_name]] <- result
 
-# calcula o mu a partir do sigma obtido
-mu_target <- log(mean_income) - (sigma_target^2) / 2
+    cat("Completed processing for", country_name, "\n")
+  }
 
-# Define the target quantile function based on these parameters.
-target_quantile <- function(q) {
-  exp(mu_target + sigma_target * qnorm(q))
-}
 
 # ========= 3. Quantile Mapping =========
 brazil_income_data_df_c_renda_ajustada <- brazil_income_data_df %>%
