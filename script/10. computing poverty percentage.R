@@ -1,6 +1,7 @@
 ### SETUP: Load Required Libraries
 library(survey)
 library(dplyr)
+library(tidyverse)
 library(microbenchmark)
 brazil_income_data  <- readRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_uruguai.rds")
 
@@ -134,7 +135,7 @@ poverty_results %>%
   mutate(Original_Count = round(Original_Count),
       Adjusted_Count = round(Adjusted_Count,0),
       Count_Difference = Adjusted_Count - Original_Count) %>%
-  saveRDS("./intermediarios/poverty_results.rds")
+  saveRDS("./intermediarios/poverty_results_uruguai.rds")
 
 ### VERIFICATION: Ensure No Missing or Unexpected Values
 check_results <- function(results_df) {
