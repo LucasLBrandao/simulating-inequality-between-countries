@@ -30,7 +30,13 @@ income_share_max_year_sa <- income_share_max_year %>%
   filter(Country %in% sample_countries)
 
 # Filtering by uruguay and saving the data
-
 income_share_max_year_sa %>%
   filter(Country %in% sample_countries) %>%
-  saveRDS("./intermediarios/income_share_accumulated_countries_sample.rds")
+  mutate(Country = case_when(
+                      Country == "Finland" ~ "Finlândia",
+                      Country == "Uruguay" ~ "Uruguai",
+                      Country == "Mexico" ~ "México",
+                      Country == "Spain" ~ "Espanha",
+                      Country == "United States" ~ "Estados Unidos",
+                      TRUE ~ Country)) %>%
+saveRDS("./intermediarios/income_share_accumulated_countries_sample.rds")

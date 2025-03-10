@@ -3,10 +3,10 @@ library(survey)
 library(dplyr)
 library(tidyverse)
 library(microbenchmark)
-brazil_income_data <- readRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_uruguai.rds")
+brazil_income_data  <- readRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_paises.rds")
 
 data = brazil_income_data
-income_var = "VD5008_DEF_adjusted"
+income_var = "VD5008_DEF_adjusted_URU"
 group_var = "sexo"
 ### FUNCTION: Compute Income Metrics with Logging
 compute_income_metrics <- function(data, income_var, group_var = NULL) {
@@ -17,6 +17,13 @@ compute_income_metrics <- function(data, income_var, group_var = NULL) {
     result_median <- svyquantile(~get(income_var), data, quantiles = 0.5, na.rm = TRUE)
     result_mean <- svymean(~get(income_var), data, na.rm = TRUE)
     result_sd <- svyvar(~get(income_var), data, na.rm = TRUE) %>% sqrt()
+
+    result_decis <- svyquantile(~get(income_var), data, quantiles = c(0.1,0.2,0.3,0.4,0.6,0.7,0.8,0.9,1), na.rm = TRUE)
+    result_decis_wider <- result_decis$`get(income_var)` %>%
+            as.tibble() %>%
+            mutate(decil = paste0(c(1,2,3,4,6,7,8,9,10),"º decil")) %>%
+            select(decil, quantile) %>%
+            pivot_wider(names_from = decil, values_from = quantile)
 
     summary_df <- tibble(
       Category = "Overall",
@@ -30,7 +37,7 @@ compute_income_metrics <- function(data, income_var, group_var = NULL) {
       SE_SD = SE(result_sd)[1],
       SD_CI_Lower = coef(result_sd)[1] - 1.96 * SE(result_sd)[1],
       SD_CI_Upper = coef(result_sd)[1] + 1.96 * SE(result_sd)[1]
-    )
+    ) %>% cbind(result_decis_wider)
   } else {
     result_median <- svyby(~get(income_var), by = as.formula(paste("~", group_var)),
                           design = data, FUN = svyquantile, quantiles = 0.5, na.rm = TRUE)
@@ -39,6 +46,11 @@ compute_income_metrics <- function(data, income_var, group_var = NULL) {
     result_sd <- svyby(~get(income_var), by = as.formula(paste("~", group_var)),
                       design = data, FUN = svyvar, na.rm = TRUE)
 
+    result_decis <- svyby(~get(income_var), by = as.formula(paste("~", group_var)),
+                          design = data, FUN = svyquantile,
+                          quantiles = c(0.1,0.2,0.3,0.4,0.6,0.7,0.8,0.9,1), na.rm = TRUE)
+     colnames(result_decis)[c(seq(2,10,1))] <-  paste0(c(1,2,3,4,6,7,8,9,10),"º decil")
+    result_decis_final  <- result_decis[,c(2:10)]
     summary_df <- tibble(
       Category = group_var,
       Category_Value = result_mean[[group_var]],
@@ -51,7 +63,7 @@ compute_income_metrics <- function(data, income_var, group_var = NULL) {
       SE_SD = sqrt(result_sd$se),
       SD_CI_Lower = sqrt(result_sd[, 2]) - 1.96 * sqrt(result_sd$se),
       SD_CI_Upper = sqrt(result_sd[, 2]) + 1.96 * sqrt(result_sd$se)
-    )
+    ) %>% cbind(result_decis_final)
   }
 
   return(summary_df)
@@ -61,18 +73,29 @@ compute_all_metrics <- function(data) {
   cat("Starting computation of all income metrics...\n")
 
   # Define grouping details
-  categories <- list(NULL, "sexo", "raça", "sexo_raca")
-  category_names <- c("Geral", "Sexo", "Raça", "Sexo e Raça")
+  categories <- list(NULL, "sexo_raca")
+  category_names <- c("Geral", "Sexo e Raça")
+  paises  <- data.frame(nome_pais = c("Finlândia",
+                                   "Uruguai",
+                                   "México",
+                                   "Espanha",
+                                   "Estados Unidos"),
+                        renda_ajustada = c("VD5008_DEF_adjusted_FIN",
+                                           "VD5008_DEF_adjusted_URU",
+                                           "VD5008_DEF_adjusted_MEX",
+                                           "VD5008_DEF_adjusted_ESP",
+                                           "VD5008_DEF_adjusted_EUA"))
+
 
   results_df <- tibble()
-
+for (pais in 1:5) {
   for (c in seq_along(categories)) {
-    cat("Processing category", category_names[c], "...\n")
+    cat("Processing category", paises$nome_pais[pais],category_names[c], "...\n")
 
     # Compute metrics for original income measure
     original <- compute_income_metrics(data, "VD5008_DEF", categories[[c]])
     # Compute metrics for adjusted income measure
-    adjusted <- compute_income_metrics(data, "VD5008_DEF_adjusted", categories[[c]])
+    adjusted <- compute_income_metrics(data, paises$renda_ajustada[pais], categories[[c]])
 
     # Merge original and adjusted results by Category and Category_Value
     merged_results <- original %>%
@@ -99,6 +122,7 @@ compute_all_metrics <- function(data) {
         by = c("Category", "Category_Value")
       ) %>%
       mutate(
+        country_name = paises$nome_pais[pais],
         category_name = category_names[c],
         # Mean differences
         Mean_Difference = Adjusted_Mean - Original_Mean,
@@ -111,13 +135,15 @@ compute_all_metrics <- function(data) {
         CI_Lower_Diff_SD = SD_Difference - 1.96 * SE_Difference_SD,
         CI_Upper_Diff_SD = SD_Difference + 1.96 * SE_Difference_SD
       ) %>%
-      select(Category, Category_Value, category_name,
+      select(country_name,
+            Category, Category_Value, category_name,
              Original_Median, Adjusted_Median,
              Original_Mean, Adjusted_Mean, Mean_Difference, SE_Difference_Mean, CI_Lower_Diff_Mean, CI_Upper_Diff_Mean,
              Original_SD, Adjusted_SD, SD_Difference, SE_Difference_SD, CI_Lower_Diff_SD, CI_Upper_Diff_SD)
 
     results_df <- bind_rows(results_df, merged_results)
   }
+}
   cat("Finished computing all income metrics.\n")
   return(results_df)
 }
