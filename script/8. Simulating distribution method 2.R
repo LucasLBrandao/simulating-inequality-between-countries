@@ -19,6 +19,7 @@ ordered_brazil_weights  <-  brazil_income_data_df  %>%
                                 arrange(VD5008_DEF) %>%
                                 .$V1032
 
+
 # Compute the original (weighted) mean income of Brazil
 mean_income <- as.numeric(svymean(~VD5008_DEF, brazil_income_data, na.rm = TRUE))
 
@@ -28,13 +29,17 @@ mean_income <- as.numeric(svymean(~VD5008_DEF, brazil_income_data, na.rm = TRUE)
 # Inverting, we obtain:
 #   sigma_target = sqrt(2) * qnorm((G + 1)/2)
 
-uruguai_gini_index <- 0.406
-uruguay_income_share <- readRDS("./intermediarios/income_share_accumulated_uruguay.rds")
-uruguay_decile_shares  <- uruguay_income_share$IncomeShareAccumulated/100
-uruguay_decile_shares[10] <- 1
+gini_indexes  <- fread("./entradas/world-bank/gini_paises_selecionados.csv")
+siglas_paises  <- gini_indexes  %>% distinct(pais, sigla_pais)
 
-# Define the optimization function
-objective_function <- function(sigma) {
+countries_income_share <- readRDS("./intermediarios/income_share_accumulated_countries_sample.rds") %>%
+                          left_join(siglas_paises, by = c("Country" = "pais"))
+
+countries_income_share$IncomeShareAccumulated  <- countries_income_share$IncomeShareAccumulated/100
+
+# Função que ajusta a distribuição lognormal para os dados de um país
+fit_log_normal <- function(country_decile_shares, country_gini_index,country_sigla) {
+  objective_function <- function(sigma) {
   # A função abaixo é derivada da MGF (Moment generating function) do t=1 de uma lognormal
   # ela foi derivada igualando a renda média do Brasil (mean_income) ao valor esperado da distribuição lognormal
   # e isolando o parametro mu.
@@ -66,38 +71,81 @@ objective_function <- function(sigma) {
 
   # depois de calcular a participação acumulada na renda teórica,
   # o valor obtido é comparado com a distribuicao do paraguai
-  error_shares <- sum((theoretical_cum_shares - uruguay_decile_shares)^2)
+  error_shares <- sum((theoretical_cum_shares - country_decile_shares)^2)
 
   # Theoretical Gini
   # a partir dos valores teóricos obtidos calcula-se o gini teórico tambem
   theoretical_gini <- weighted.gini(x = sample$sim_sample, w = sample$weight_sample)$Gini
 
   # e é computado o erro, comparando com o erro do uruguay
-  error_gini <- (theoretical_gini - uruguai_gini_index)^2
+  error_gini <- (theoretical_gini - country_gini_index)^2
 
   # Total loss function (weights can be adjusted if needed)
   # calcula-se entao o erro compartilhado
   return(error_shares + error_gini)
+    }
+    # Optimize sigma
+
+    # calcula-se um sigma inicial com base no gini do uruguai
+    initial_sigma <- sqrt(2) * qnorm((country_gini_index + 1) / 2)
+
+    # utiliza-se a funcao optim para encontrar o sigma que minimiza o erro da função acima
+    opt_result <- optim(par = initial_sigma, fn = objective_function, method = "BFGS")
+
+    # extrai o sigma do resultado
+    sigma_target <- opt_result$par
+
+    # calcula o mu a partir do sigma obtido
+    mu_target <- log(mean_income) - (sigma_target^2) / 2
+
+    # Define the target quantile function based on these parameters.
+    target_quantile <- function(q) {
+      exp(mu_target + sigma_target * qnorm(q))
+    }
+
+  func_name <- paste0("target_quantile_", gsub("[^a-zA-Z0-9]", "_", tolower(country_sigla)))
+  assign(func_name, target_quantile, envir = .GlobalEnv)
+
+    return(data.frame(
+    country = country_sigla,
+    mu = mu_target,
+    sigma = sigma_target
+  ))
+
 }
 
-# Optimize sigma
+# Obtendo as target functions for each countries
 
-# calcula-se um sigma inicial com base no gini do uruguai
-initial_sigma <- sqrt(2) * qnorm((uruguai_gini_index + 1) / 2)
+results_final  <- data.frame(
+    country = NULL,
+    mu = NULL,
+    sigma = NULL
+  )
+for (country_name in unique(countries_income_share$Country)) {
+    cat("Processing country:", country_name, "\n")
 
-# utiliza-se a funcao optim para encontrar o sigma que minimiza o erro da função acima
-opt_result <- optim(par = initial_sigma, fn = objective_function, method = "BFGS")
+    gini_country  <- gini_indexes %>% filter(pais == country_name) %>% pull(gini)/100
 
-# extrai o sigma do resultado
-sigma_target <- opt_result$par
+    deciles_shares_country  <- countries_income_share %>%
+                                  filter(Country == country_name) %>%
+                                  pull(IncomeShareAccumulated)
+    deciles_shares_country[10] <- 1
 
-# calcula o mu a partir do sigma obtido
-mu_target <- log(mean_income) - (sigma_target^2) / 2
+    sigla  <- gini_indexes %>% filter(pais == country_name) %>% pull(sigla_pais)
 
-# Define the target quantile function based on these parameters.
-target_quantile <- function(q) {
-  exp(mu_target + sigma_target * qnorm(q))
-}
+    # Create target quantile function for this country
+    result  <- fit_log_normal(
+      country_decile_shares = deciles_shares_country,
+      country_gini_index = gini_country,
+      country_sigla = sigla
+      )
+
+    # Store result
+    results_final <- bind_rows(results_final,result)
+
+    cat("Completed processing for", country_name, "\n")
+  }
+
 
 # ========= 3. Quantile Mapping =========
 brazil_income_data_df_c_renda_ajustada <- brazil_income_data_df %>%
@@ -106,7 +154,12 @@ brazil_income_data_df_c_renda_ajustada <- brazil_income_data_df %>%
          total_weight = sum(V1032, na.rm = TRUE),
          emp_quantile = cum_weight / total_weight,
          emp_quantile_adjusted = pmin(pmax(cum_weight / total_weight, 1e-7), 1 - 1e-7),
-         VD5008_DEF_adjusted = target_quantile(emp_quantile_adjusted))
+         VD5008_DEF_adjusted_URU = target_quantile_uru(emp_quantile_adjusted),
+         VD5008_DEF_adjusted_EUA = target_quantile_eua(emp_quantile_adjusted),
+         VD5008_DEF_adjusted_ESP = target_quantile_esp(emp_quantile_adjusted),
+          VD5008_DEF_adjusted_FIN = target_quantile_fin(emp_quantile_adjusted),
+          VD5008_DEF_adjusted_MEX = target_quantile_mex(emp_quantile_adjusted)
+         )
 
 tail(brazil_income_data_df_c_renda_ajustada %>%
         select(orig_order,cum_weight,
@@ -114,64 +167,116 @@ tail(brazil_income_data_df_c_renda_ajustada %>%
               emp_quantile,
               emp_quantile_adjusted,
               VD5008_DEF,
-              VD5008_DEF_adjusted))
+              VD5008_DEF_adjusted_URU,
+              VD5008_DEF_adjusted_EUA,
+              VD5008_DEF_adjusted_ESP,
+              VD5008_DEF_adjusted_FIN,
+              VD5008_DEF_adjusted_MEX))
 
-renda_media  <- weighted.mean(brazil_income_data_df_c_renda_ajustada$VD5008_DEF,
-             brazil_income_data_df_c_renda_ajustada$V1032)
-
-renda_media_ajustada  <- weighted.mean(brazil_income_data_df_c_renda_ajustada$VD5008_DEF_adjusted,
-             brazil_income_data_df_c_renda_ajustada$V1032)
-
-scaling_factor <- renda_media / renda_media_ajustada
+# Compute weighted means of the specified income variables using V1032 as weights
 brazil_income_data_df_c_renda_ajustada <- brazil_income_data_df_c_renda_ajustada %>%
-  mutate(VD5008_DEF_adjusted = VD5008_DEF_adjusted * scaling_factor)
+  mutate(
+    mean_VD5008_DEF = weighted.mean(VD5008_DEF, V1032, na.rm = TRUE),
+    mean_VD5008_DEF_adjusted_URU = weighted.mean(VD5008_DEF_adjusted_URU, V1032, na.rm = TRUE),
+    mean_VD5008_DEF_adjusted_EUA = weighted.mean(VD5008_DEF_adjusted_EUA, V1032, na.rm = TRUE),
+    mean_VD5008_DEF_adjusted_ESP = weighted.mean(VD5008_DEF_adjusted_ESP, V1032, na.rm = TRUE),
+    mean_VD5008_DEF_adjusted_FIN = weighted.mean(VD5008_DEF_adjusted_FIN, V1032, na.rm = TRUE),
+    mean_VD5008_DEF_adjusted_MEX = weighted.mean(VD5008_DEF_adjusted_MEX, V1032, na.rm = TRUE),
+
+    scaling_factor_uru = mean_VD5008_DEF_adjusted_URU/mean_VD5008_DEF,
+    scaling_factor_eua = mean_VD5008_DEF_adjusted_EUA/mean_VD5008_DEF,
+    scaling_factor_esp = mean_VD5008_DEF_adjusted_ESP/mean_VD5008_DEF,
+    scaling_factor_fin =mean_VD5008_DEF_adjusted_FIN/mean_VD5008_DEF,
+    scaling_factor_mex = mean_VD5008_DEF_adjusted_MEX/mean_VD5008_DEF,
+
+    VD5008_DEF_adjusted_URU = VD5008_DEF_adjusted_URU * scaling_factor_uru,
+    VD5008_DEF_adjusted_EUA = VD5008_DEF_adjusted_EUA * scaling_factor_eua,
+    VD5008_DEF_adjusted_ESP = VD5008_DEF_adjusted_ESP * scaling_factor_esp,
+    VD5008_DEF_adjusted_FIN = VD5008_DEF_adjusted_FIN * scaling_factor_fin,
+    VD5008_DEF_adjusted_MEX = VD5008_DEF_adjusted_MEX * scaling_factor_mex
+  )
 
 # ========= 4. Update Survey Design =========
 # 4.1 atualizando a base com a ordem original
 # verifica-se abaixo que as bases estão em ordens diferentes:
 head(brazil_income_data_df %>% select(orig_order, VD5008_DEF))
-head(brazil_income_data_df_c_renda_ajustada %>% select(orig_order, VD5008_DEF,VD5008_DEF_adjusted))
+head(brazil_income_data_df_c_renda_ajustada %>% select(orig_order,
+                                                      VD5008_DEF,
+                                                      VD5008_DEF_adjusted_URU,
+                                                      VD5008_DEF_adjusted_EUA,
+                                                      VD5008_DEF_adjusted_ESP,
+                                                      VD5008_DEF_adjusted_FIN,
+                                                      VD5008_DEF_adjusted_MEX))
 
 # Portanto, é necessário garantir que os novos valores de renda estejam atribuídos a observações corretas
 brazil_income_data_df_final <- brazil_income_data_df %>%
   left_join(brazil_income_data_df_c_renda_ajustada %>%
-                select(orig_order, VD5008_DEF_adjusted),
+                select(orig_order, VD5008_DEF_adjusted_URU,
+                                                      VD5008_DEF_adjusted_EUA,
+                                                      VD5008_DEF_adjusted_ESP,
+                                                      VD5008_DEF_adjusted_FIN,
+                                                      VD5008_DEF_adjusted_MEX),
             by = "orig_order") %>%
   arrange(orig_order)
 
-head(brazil_income_data_df_final%>% select(orig_order, VD5008_DEF,VD5008_DEF_adjusted))
+head(brazil_income_data_df_final%>% select(orig_order,
+                                            VD5008_DEF,
+                                            VD5008_DEF_adjusted_URU,
+                                            VD5008_DEF_adjusted_EUA,
+                                            VD5008_DEF_adjusted_ESP,
+                                            VD5008_DEF_adjusted_FIN,
+                                            VD5008_DEF_adjusted_MEX))
 
 brazil_income_data_adjusted <- update(brazil_income_data,
-                                      VD5008_DEF_adjusted = brazil_income_data_df_final$VD5008_DEF_adjusted)
+                                      VD5008_DEF_adjusted_URU = brazil_income_data_df_final$VD5008_DEF_adjusted_URU,
+                                      VD5008_DEF_adjusted_EUA = brazil_income_data_df_final$VD5008_DEF_adjusted_EUA,
+                                      VD5008_DEF_adjusted_ESP = brazil_income_data_df_final$VD5008_DEF_adjusted_ESP,
+                                      VD5008_DEF_adjusted_FIN = brazil_income_data_df_final$VD5008_DEF_adjusted_FIN,
+                                      VD5008_DEF_adjusted_MEX = brazil_income_data_df_final$VD5008_DEF_adjusted_MEX)
 
-cat("Optimal sigma:", sigma_target, "\n")
-cat("Optimal mu:", mu_target, "\n")
 # ========= 5. Validação dos resultados ----
 
 # 5.1 Renda média idêntica --------
-renda_media_brasil <- svymean(~VD5008_DEF,
-                             brazil_income_data_adjusted,
-                             na.rm = TRUE)
+svymean(~VD5008_DEF+
+        VD5008_DEF_adjusted_URU+
+        VD5008_DEF_adjusted_EUA+
+        VD5008_DEF_adjusted_ESP+
+        VD5008_DEF_adjusted_FIN+
+        VD5008_DEF_adjusted_MEX,
+        brazil_income_data_adjusted,
+        na.rm = TRUE)
 
-renda_media_ajustada_brasil <- svymean(~VD5008_DEF_adjusted,
-                             brazil_income_data_adjusted,
-                             na.rm = TRUE)
 # 5.2 índice de Gini -------
 library(convey)
 
 brazil_income_data_adjusted <- convey_prep(brazil_income_data_adjusted)
-gini_index_renda <- svygini(~VD5008_DEF,
-                            design = brazil_income_data_adjusted,
-                            na.rm = TRUE)
 
-gini_index_renda_ajustada <- svygini(~VD5008_DEF_adjusted,
-                                     design = brazil_income_data_adjusted,
-                                     na.rm = TRUE)
+original_gini_brazil  <- svygini(~VD5008_DEF,
+        design = brazil_income_data_adjusted,
+        na.rm = TRUE)
+adjusted_gini_spain  <- svygini(~VD5008_DEF_adjusted_ESP,
+        design = brazil_income_data_adjusted,
+        na.rm = TRUE)
+adjusted_gini_finland <- svygini(~VD5008_DEF_adjusted_FIN,
+        design = brazil_income_data_adjusted,
+        na.rm = TRUE)
+adjusted_gini_mexico <- svygini(~VD5008_DEF_adjusted_MEX,
+        design = brazil_income_data_adjusted,
+        na.rm = TRUE)
+adjusted_gini_eua <- svygini(~VD5008_DEF_adjusted_EUA,
+        design = brazil_income_data_adjusted,
+        na.rm = TRUE)
+adjusted_gini_uru <- svygini(~VD5008_DEF_adjusted_URU,
+        design = brazil_income_data_adjusted,
+        na.rm = TRUE)
+
+gini_indexes
 
 
 # 5.3 distribuição entre os decis ------
 
 # Helper function to compute Lorenz curve for a given income variable
+source("./script/_dataviz settings.R")
 compute_lorenz <- function(var, label) {
   # Create a formula for the survey functions
   form <- as.formula(paste0("~", var))
@@ -195,56 +300,57 @@ compute_lorenz <- function(var, label) {
     select(cumulative_income,cumulative_population,renda)
 }
 
-# Compute Lorenz curves for the two income variables
-lorenz_curve          <- compute_lorenz("VD5008_DEF", "Brasil")
-adjusted_lorenz_curve <- compute_lorenz("VD5008_DEF_adjusted", "Brasil ajustado")
+var_income = "VD5008_DEF_adjusted_FIN"
+country_desc = "Finlândia"
+plot_lorenz_curves  <- function(var_income, country_desc){
+  # Compute Lorenz curves for the two income variables
+  lorenz_curve          <- compute_lorenz("VD5008_DEF", "Brasil")
+  adjusted_lorenz_curve <- compute_lorenz(var_income, paste("Ajuste",country_desc) )
 
-# Load and adjust Uruguay's Lorenz curve data
-uruguai_lorenz_curve <- readRDS("./intermediarios/income_share_accumulated_uruguay.rds") %>%
-  mutate(cumulative_population = Decile / 10,
-         cumulative_income     = IncomeShareAccumulated / 100,
-         renda = "Uruguai") %>%
-  select(cumulative_population, cumulative_income,renda)
+  # Load and adjust Uruguay's Lorenz curve data
+  country_lorenz_curve <- countries_income_share %>%
+    filter(Country == country_desc ) %>%
+    mutate(cumulative_population = Decile / 10,
+          cumulative_income     = IncomeShareAccumulated,
+          renda = country_desc) %>%
+    select(cumulative_population, cumulative_income,renda)
 
-# Combine all curves and plot them
-both_lorenz <- bind_rows(lorenz_curve, adjusted_lorenz_curve, uruguai_lorenz_curve)
+  # Combine all curves and plot them
+  both_lorenz <- bind_rows(lorenz_curve, adjusted_lorenz_curve, country_lorenz_curve)
 
 
-# Plotting the lorenz
-last_points <- both_lorenz %>%
-  group_by(renda) %>%
-  filter(cumulative_population == max(cumulative_population))
 
-library(ggrepel)
-source("./script/0. tema ggplot.R")
-# Create the Lorenz curve plot
-options(vsc.dev.args = list(width=1500, height=1500, pointsize=12, res=300))
-png(filename = "./saidas/Comparação renda compartilhada Brasil, Brasil ajustado e Uruguai.png",width=1500, height=1500, pointsize=12, res=300)
+  # Create the Lorenz curve plot
+  ggplot(both_lorenz, aes(x = cumulative_population,
+                          y = cumulative_income,
+                          color = renda)) +
+    geom_line(size = 1, alpha = 0.5) +
+    # Direct labeling using the last point of each curve
+    labs(title = "Comparação da Curva de Lorenz da renda",
+        subtitle = paste0("Renda do Brasil, do ",country_desc," e ajustada pela distribuição do ",country_desc),
+        col = "",
+        x = "População acumulada",
+        y = "Participação acumulada na renda",
+        caption = "Fontes: PNADc(2023) & Banco Mundial") +
+    scale_x_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+    scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+    scale_color_brewer(palette = "Set1") +
+    theme_minimal(base_size = 12) +
+    theme_swd()+
+    theme(
+          legend.position = "top",  # legend removed in favor of direct labeling
+          legend.justification='left',
+          #plot.title = element_text(face = "bold", hjust = 0.5),
+          #plot.subtitle = element_text(hjust = 0.5),
+          axis.title.x = element_text(margin = margin(t = 10)),
+          axis.title.y = element_text(margin = margin(r = 10)))
 
-ggplot(both_lorenz, aes(x = cumulative_population, y = cumulative_income, color = renda)) +
-  geom_line(size = 1, alpha = 0.5) +
-  # Direct labeling using the last point of each curve
-  labs(title = "Comparação da Curva de Lorenz da renda",
-       subtitle = "Renda do Brasil, do Uruguai e Renda do Brasil com distribuição do uruguai",
-       col = "",
-       x = "População acumulada",
-       y = "Participação acumulada na renda",
-       caption = "Fontes: PNADc(2023) & Banco Mundial") +
-  scale_x_continuous(expand = expansion(mult = c(0.01, 0.05))) +
-  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
-  scale_color_brewer(palette = "Set1") +
-  theme_minimal(base_size = 12) +
-  theme_swd()+
-  theme(
-        legend.position = "top",  # legend removed in favor of direct labeling
-        legend.justification='left',
-        #plot.title = element_text(face = "bold", hjust = 0.5),
-        #plot.subtitle = element_text(hjust = 0.5),
-        axis.title.x = element_text(margin = margin(t = 10)),
-        axis.title.y = element_text(margin = margin(r = 10)))
-dev.off()
-# Display the plot
+
+
+}
+
+plot_lorenz_curves("VD5008_DEF_adjusted_URU", "Uruguai")
 
 # ======= 6. saving result ======
 
-brazil_income_data_adjusted %>% saveRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_uruguai.rds")
+brazil_income_data_adjusted %>% saveRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_paises.rds")

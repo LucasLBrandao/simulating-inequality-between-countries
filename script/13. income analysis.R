@@ -1,4 +1,3 @@
-
 # Load necessary libraries
 library(ggplot2)
 library(dplyr)
@@ -8,50 +7,50 @@ library(tidyr)
 
 source("./script/_dataviz settings.R")
 
-poverty_df <- readRDS("./intermediarios/poverty_results_countries_sample.rds")
-poverty_df %>% openxlsx::write.xlsx("./saidas/analise_pobreza_paises.xlsx")
-poverty_df %>% data.table::fwrite("./saidas/analise_pobreza_paises.csv")
-poverty_df %>% colnames()
-poverty_df$threshold_name %>% unique()
-poverty_df %>% View()
+income_df <- readRDS("./intermediarios/income_results_countries_sample.rds")
+income_df %>% openxlsx::write.xlsx("./saidas/analise_pobreza_paises.xlsx")
+income_df %>% data.table::fwrite("./saidas/analise_pobreza_paises.csv")
+income_df %>% colnames()
+income_df %>% View()
 
-create_poverty_plot  <- function(data, threshold_value){
-  poverty_df_tratado   <- data %>%
-      filter(threshold_name == threshold_value) %>%
-      arrange(-(Original_Rate)) %>%
-      mutate(Adjusted_Rate = Adjusted_Rate*100,
-          Original_Rate = Original_Rate*100) %>%
+
+create_income_plot  <- function(data,
+                                original_variable_name,
+                                adjusted_variable_name){
+  income_df_tratado   <- data %>%
+      arrange(-(get(original_variable_name))) %>%
       mutate(Category_Value = factor(Category_Value, levels = unique(Category_Value))) %>%
       mutate(Category_Value = relevel(Category_Value, ref = "Geral")) %>%
       mutate(Category_Value = factor(Category_Value, levels = rev(levels(Category_Value)))) %>%
-      arrange((Rate_Difference)) %>%
+      arrange((Mean_Difference)) %>%
       mutate(country_name = factor(country_name, levels = unique(country_name)))
 
-
-  ggplot(poverty_df_tratado,
+min_value <- min(income_df_tratado[[original_variable_name]]) * 0.9
+max_value <- max(income_df_tratado[[adjusted_variable_name]]) * 1.1
+  ggplot(income_df_tratado,
     aes(y = Category_Value,color = country_name))+
-    geom_point(aes(x = Adjusted_Rate), size = 2)+
-    geom_point(aes(x = Original_Rate, color = "Brasil"),
+    geom_point(aes(x = get(original_variable_name), color = "Brasil"),
       shape = "|",
     size = 4)+
+    geom_point(aes(x = get(adjusted_variable_name)), size = 2)+
     theme_swd()+
     labs(col = "")+
-    ggrepel::geom_text_repel(aes(x = Adjusted_Rate,
-                  label = round(Adjusted_Rate , 1)),
+    ggrepel::geom_text_repel(aes(x = get(adjusted_variable_name),
+                  label = scales::comma(round(get(adjusted_variable_name) , 1),big.mark = ".",decimal.mark = ",")),
                   vjust = -1, size = 3)+
-    geom_text(aes(x = Original_Rate,
-    label = round(Original_Rate , 1),color = "Brasil"),
-    size = 3, hjust = -0.1)+
+    geom_text(aes(x = get(original_variable_name),
+    label = scales::comma(round(get(original_variable_name) , 1),big.mark = ".",decimal.mark = ","),color = "Brasil"),
+    size = 3, hjust = 1.1)+
     scale_color_manual(values = c("Brasil" = "#4c4c4c",
                                     "Finlândia" = "#5ecda8",
                                     "Espanha" = "#6189b9",
                                     "Estados Unidos" = "#d0c314",
                                     "Uruguai" = "#ed9375",
                                     "México" = "#cd4242"))+
-    labs(x = "Taxa de pobreza (%)",
+    labs(x = "Mediana (R$)",
           y = "",
           col = "") +
-    scale_x_continuous(n.breaks = 10)+
+    scale_x_continuous(n.breaks = 5, labels = scales::label_comma(big.mark = ".", decimal.mark = ","))+
       # Theme customization
       theme(legend.position = "top",
           legend.direction = "horizontal",
@@ -67,19 +66,22 @@ create_poverty_plot  <- function(data, threshold_value){
           plot.title = element_text(size = 14, face = "bold"),
           plot.subtitle = element_text(size = 10)) +
       guides(color = guide_legend(override.aes = list(label = "",
-            size = 2), nrow = 1))
+            size = 2), nrow = 1))+
+      xlim(min_value,max_value)
 
 }
+options(vsc.dev.args = list(width=2000, height=1500, pointsize=12, res=300))
 
-create_poverty_plot(poverty_df, "Pobreza")
-create_poverty_plot(poverty_df, "Extrema Pobreza")
+create_income_plot(income_df, "Original_Median","Adjusted_Median")
+create_income_plot(income_df, "Extrema Pobreza")
 
-create_difference_plot <- function(data, threshold_value) {
+create_difference_plot <- function(data,
+                                original_variable_name,
+                                adjusted_variable_name) {
   # Filter data for the specified threshold
   plot_data <- data %>%
-    filter(threshold_name == threshold_value) %>%
-    arrange(-(Original_Rate)) %>%
-    mutate(Rate_Difference = Rate_Difference*100) %>%
+    arrange(-(get(original_variable_name))) %>%
+    mutate(Rate_Difference = (get(adjusted_variable_name)*100/get(original_variable_name)) - 100 ) %>%
     mutate(Category_Value = factor(Category_Value, levels = unique(Category_Value))) %>%
     mutate(Category_Value = relevel(Category_Value, ref = "Geral")) %>%
     mutate(Category_Value = factor(Category_Value, levels = rev(levels(Category_Value)))) %>%
@@ -87,8 +89,8 @@ create_difference_plot <- function(data, threshold_value) {
     mutate(country_name = factor(country_name, levels = unique(country_name)))
 
   # Find min and max difference for proper scaling
-  min_diff <- min(plot_data$Rate_Difference) * 1.1
-  max_diff <- 0  # Since all differences are negative
+  #min_diff <- min(plot_data$Rate_Difference) * 1.1
+  #max_diff <- 0  # Since all differences are negative
 
   # Create plot
   ggplot(plot_data, aes(y = Category_Value,
@@ -98,11 +100,11 @@ create_difference_plot <- function(data, threshold_value) {
     # Points for rate differences
     geom_point(size = 2) +
     # Add labels for differences
-    ggrepel::geom_text_repel(aes(label = round(Rate_Difference, 1)),
+    ggrepel::geom_text_repel(aes(label = paste0("+",round(Rate_Difference, 1))),
               vjust = -1, size = 3) +
     # Format x-axis as percentage
-    scale_x_continuous(
-                       limits = c(min_diff, max_diff)) +
+    #scale_x_continuous(
+    #                   limits = c(min_diff, max_diff)) +
     # Color scheme for countries
     scale_color_manual(values = c("Brasil" = "#4c4c4c",
                                   "Finlândia" = "#5ecda8",
@@ -113,7 +115,7 @@ create_difference_plot <- function(data, threshold_value) {
     # Facet by category
    # facet_wrap(~Category, scales = "free_y") +
     # Labels and title
-    labs(x = "Diferença na Taxa de pobreza (p.p.)",
+    labs(x = "Diferença na Mediana (%)",
          y = "",
          col = "") +
     # Theme customization
@@ -134,32 +136,32 @@ create_difference_plot <- function(data, threshold_value) {
     guides(color = guide_legend(override.aes = list(label = "", size = 2)))
 }
 # Create difference plots
-create_difference_plot(poverty_data, "Pobreza")
-create_difference_plot(poverty_data, "Extrema Pobreza")
+create_difference_plot(income_df, "Original_Median","Adjusted_Median")
+create_difference_plot(income_data, "Extrema Pobreza")
 
 # ---------------------------
 # Overall Comparison Plot
 # ---------------------------
 
-create_specific_country_poverty_plot  <- function(data,selected_country){
+create_specific_country_income_plot  <- function(data,selected_country){
   ggplot(data %>% filter(country_name == selected_country), aes(x = Category_Value)) +
     # Connect the two points for each category with a dashed line
     geom_segment(aes(x = Category_Value, xend = Category_Value,
-                    y = Original_Rate, yend = Adjusted_Rate),
+                    y = get(original_variable_name), yend = get(adjusted_variable_name)),
                 linetype = "solid", size = 0.5, color = "gray50") +
     # Plot original and adjusted rates as points
-    geom_point(aes(y = Original_Rate, color = "Renda"), size = 3) +
-    geom_point(aes(y = Adjusted_Rate, color = "Renda Ajustada"), size = 3) +
+    geom_point(aes(y = get(original_variable_name), color = "Renda"), size = 3) +
+    geom_point(aes(y = get(adjusted_variable_name), color = "Renda Ajustada"), size = 3) +
     # Add data labels for original and adjusted rates
-    geom_text(aes(y = Original_Rate, label = round(Original_Rate * 100, 1)),
+    geom_text(aes(y = get(original_variable_name), label = round(get(original_variable_name) * 100, 1)),
               vjust = -1, color = "#b34739", size = 3) +
-    geom_text(aes(y = Adjusted_Rate, label = round(Adjusted_Rate * 100, 1)),
+    geom_text(aes(y = get(adjusted_variable_name), label = round(get(adjusted_variable_name) * 100, 1)),
               vjust = -1, color = "#5575ba", size = 3) +
     # Add data label for rate difference
-    geom_text(aes(y = (Original_Rate + Adjusted_Rate) / 2,
+    geom_text(aes(y = (get(original_variable_name) + get(adjusted_variable_name)) / 2,
                   label = round(Rate_Difference * 100, 1)),
               vjust = 1.5, color = "gray50", size = 2) +
-    # Facet by poverty threshold type
+    # Facet by income threshold type
     facet_wrap(~ threshold_name, scales = "fixed") +
     # Define a consistent, accessible color palette
     scale_color_manual(values = c("Renda" = "#b34739",
@@ -186,5 +188,5 @@ create_specific_country_poverty_plot  <- function(data,selected_country){
 
 }
 
-create_specific_country_poverty_plot(poverty_df, "Finlândia")
+create_specific_country_income_plot(income_df, "Finlândia")
 
