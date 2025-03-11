@@ -43,7 +43,7 @@ create_poverty_plot  <- function(data, threshold_value){
     label = round(Original_Rate , 1),color = "Brasil"),
     size = 3, hjust = -0.1)+
     scale_color_manual(values = c("Brasil" = "#4c4c4c",
-                                    "Finlândia" = "#51989a",
+                                    "Finlândia" = "#5ecda8",
                                     "Espanha" = "#6189b9",
                                     "Estados Unidos" = "#d0c314",
                                     "Uruguai" = "#ed9375",
@@ -105,7 +105,7 @@ create_difference_plot <- function(data, threshold_value) {
                        limits = c(min_diff, max_diff)) +
     # Color scheme for countries
     scale_color_manual(values = c("Brasil" = "#4c4c4c",
-                                  "Finlândia" = "#51989a",
+                                  "Finlândia" = "#5ecda8",
                                   "Espanha" = "#6189b9",
                                   "Estados Unidos" = "#d0c314",
                                   "Uruguai" = "#ed9375",
