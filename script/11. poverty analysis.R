@@ -8,16 +8,16 @@ library(tidyr)
 
 source("./script/_dataviz settings.R")
 
-poverty_df <- readRDS("./intermediarios/poverty_results_countries_sample.rds")
+poverty_df <- readRDS("./intermediarios/poverty_results_countries_sample_c_idade.rds")
 poverty_df %>% openxlsx::write.xlsx("./saidas/analise_pobreza_paises.xlsx")
 poverty_df %>% data.table::fwrite("./saidas/analise_pobreza_paises.csv")
 poverty_df %>% colnames()
-poverty_df$threshold_name %>% unique()
-poverty_df %>% View()
+poverty_df$Category_Value %>% unique()
 
 create_poverty_plot  <- function(data, threshold_value){
   poverty_df_tratado   <- data %>%
-      filter(threshold_name == threshold_value) %>%
+      filter(threshold_name == threshold_value,
+            Category_Value != "Acima de 14 anos") %>%
       arrange(-(Original_Rate)) %>%
       mutate(Adjusted_Rate = Adjusted_Rate*100,
           Original_Rate = Original_Rate*100) %>%
@@ -27,10 +27,11 @@ create_poverty_plot  <- function(data, threshold_value){
       arrange((Rate_Difference)) %>%
       mutate(country_name = factor(country_name, levels = unique(country_name)))
 
-
+  max_value = max(poverty_df_tratado$Original_Rate)*1.1
+  min_value = min(poverty_df_tratado$Adjusted_Rate)*0.9
   ggplot(poverty_df_tratado,
     aes(y = Category_Value,color = country_name))+
-    geom_point(aes(x = Adjusted_Rate), size = 2)+
+    geom_point(aes(x = Adjusted_Rate), size = 2.5)+
     geom_point(aes(x = Original_Rate, color = "Brasil"),
       shape = "|",
     size = 4)+
@@ -42,16 +43,17 @@ create_poverty_plot  <- function(data, threshold_value){
     geom_text(aes(x = Original_Rate,
     label = round(Original_Rate , 1),color = "Brasil"),
     size = 3, hjust = -0.1)+
-    scale_color_manual(values = c("Brasil" = "#4c4c4c",
-                                    "Finlândia" = "#5ecda8",
-                                    "Espanha" = "#6189b9",
-                                    "Estados Unidos" = "#d0c314",
-                                    "Uruguai" = "#ed9375",
-                                    "México" = "#cd4242"))+
+    scale_color_manual(values = c("Brasil" = "black",
+                                    "Finlândia" = "#1a8abe" ,
+                                    "Espanha" = "#58508d",
+                                    "Estados Unidos" = "#bc5090",
+                                    "Uruguai" = "#ff6361",
+                                    "México" = "#ffa600"))+
     labs(x = "Taxa de pobreza (%)",
           y = "",
           col = "") +
     scale_x_continuous(n.breaks = 10)+
+    xlim(min_value,max_value)+
       # Theme customization
       theme(legend.position = "top",
           legend.direction = "horizontal",
@@ -77,7 +79,8 @@ create_poverty_plot(poverty_df, "Extrema Pobreza")
 create_difference_plot <- function(data, threshold_value) {
   # Filter data for the specified threshold
   plot_data <- data %>%
-    filter(threshold_name == threshold_value) %>%
+    filter(threshold_name == threshold_value,
+           Category_Value != "Acima de 14 anos") %>%
     arrange(-(Original_Rate)) %>%
     mutate(Rate_Difference = Rate_Difference*100) %>%
     mutate(Category_Value = factor(Category_Value, levels = unique(Category_Value))) %>%
@@ -104,12 +107,12 @@ create_difference_plot <- function(data, threshold_value) {
     scale_x_continuous(
                        limits = c(min_diff, max_diff)) +
     # Color scheme for countries
-    scale_color_manual(values = c("Brasil" = "#4c4c4c",
-                                  "Finlândia" = "#5ecda8",
-                                  "Espanha" = "#6189b9",
-                                  "Estados Unidos" = "#d0c314",
-                                  "Uruguai" = "#ed9375",
-                                  "México" = "#cd4242")) +
+    scale_color_manual(values =  c("Brasil" = "black",
+                                    "Finlândia" = "#1a8abe" ,
+                                    "Espanha" = "#58508d",
+                                    "Estados Unidos" = "#bc5090",
+                                    "Uruguai" = "#ff6361",
+                                    "México" = "#ffa600")) +
     # Facet by category
    # facet_wrap(~Category, scales = "free_y") +
     # Labels and title
@@ -134,8 +137,8 @@ create_difference_plot <- function(data, threshold_value) {
     guides(color = guide_legend(override.aes = list(label = "", size = 2)))
 }
 # Create difference plots
-create_difference_plot(poverty_data, "Pobreza")
-create_difference_plot(poverty_data, "Extrema Pobreza")
+create_difference_plot(poverty_df, "Pobreza")
+create_difference_plot(poverty_df, "Extrema Pobreza")
 
 # ---------------------------
 # Overall Comparison Plot

@@ -5,9 +5,11 @@ library(tidyverse)
 library(microbenchmark)
 brazil_income_data  <- readRDS("./intermediarios/renda_PNADc_brasil2023visita_1_ajustada_paises.rds")
 
-data = brazil_income_data
-income_var = "VD5008_DEF_adjusted_URU"
-group_var = "sexo"
+
+brazil_income_data <- update(brazil_income_data,
+  fl_criancas = ifelse(V2009 <= 14, "Até 14 anos", "Acima de 14 anos")
+)
+
 ### FUNCTION: Compute Income Metrics with Logging
 compute_income_metrics <- function(data, income_var, group_var = NULL) {
   cat("Computing income metrics for", income_var, "and group",
@@ -73,77 +75,108 @@ compute_all_metrics <- function(data) {
   cat("Starting computation of all income metrics...\n")
 
   # Define grouping details
-  categories <- list(NULL, "sexo_raca")
-  category_names <- c("Geral", "Sexo e Raça")
-  paises  <- data.frame(nome_pais = c("Finlândia",
-                                   "Uruguai",
-                                   "México",
-                                   "Espanha",
-                                   "Estados Unidos"),
-                        renda_ajustada = c("VD5008_DEF_adjusted_FIN",
-                                           "VD5008_DEF_adjusted_URU",
-                                           "VD5008_DEF_adjusted_MEX",
-                                           "VD5008_DEF_adjusted_ESP",
-                                           "VD5008_DEF_adjusted_EUA"))
+  categories <- list(NULL, "sexo_raca", "fl_criancas")
+  category_names <- c("Geral", "Sexo e Raça", "Faixa Idade")
+  paises <- data.frame(
+    nome_pais = c("Finlândia",
+                  "Uruguai",
+                  "México",
+                  "Espanha",
+                  "Estados Unidos"),
+    renda_ajustada = c("VD5008_DEF_adjusted_FIN",
+                       "VD5008_DEF_adjusted_URU",
+                       "VD5008_DEF_adjusted_MEX",
+                       "VD5008_DEF_adjusted_ESP",
+                       "VD5008_DEF_adjusted_EUA"),
+    stringsAsFactors = FALSE
+  )
 
+  # Compute original metrics once for each category.
+  # Rename decile columns (e.g. "1º decil", "2º decil", ...) with prefix "Original_"
+  original_results_list <- list()
+  for (i in seq_along(categories)) {
+    cat("Computing original metrics for category", category_names[i], "...\n")
+    original_cat <- compute_income_metrics(data, "VD5008_DEF", categories[[i]]) %>%
+      mutate(category_name = category_names[i]) %>%
+      rename_at(vars(contains("decil")), ~ paste0("Original_", .))
+    original_results_list[[i]] <- original_cat
+  }
+  original_results <- bind_rows(original_results_list)
 
   results_df <- tibble()
-for (pais in 1:5) {
-  for (c in seq_along(categories)) {
-    cat("Processing category", paises$nome_pais[pais],category_names[c], "...\n")
 
-    # Compute metrics for original income measure
-    original <- compute_income_metrics(data, "VD5008_DEF", categories[[c]])
-    # Compute metrics for adjusted income measure
-    adjusted <- compute_income_metrics(data, paises$renda_ajustada[pais], categories[[c]])
+  # For each country and category, compute adjusted metrics and join with original.
+  # Rename decile columns with prefix "Adjusted_" for the computed metrics.
+  for (pais in 1:nrow(paises)) {
+    for (i in seq_along(categories)) {
+      cat("Processing", paises$nome_pais[pais], "for category", category_names[i], "...\n")
+      adjusted_cat <- compute_income_metrics(data, paises$renda_ajustada[pais], categories[[i]]) %>%
+        mutate(category_name = category_names[i]) %>%
+        rename_at(vars(contains("decil")), ~ paste0("Adjusted_", .))
 
-    # Merge original and adjusted results by Category and Category_Value
-    merged_results <- original %>%
-      rename(Original_Median = Median,
-             Original_Mean = Mean,
-             Original_SE_Mean = SE_Mean,
-             Original_Mean_CI_Lower = Mean_CI_Lower,
-             Original_Mean_CI_Upper = Mean_CI_Upper,
-             Original_SD = SD,
-             Original_SE_SD = SE_SD,
-             Original_SD_CI_Lower = SD_CI_Lower,
-             Original_SD_CI_Upper = SD_CI_Upper) %>%
-      left_join(
-        adjusted %>%
-          rename(Adjusted_Median = Median,
-                 Adjusted_Mean = Mean,
-                 Adjusted_SE_Mean = SE_Mean,
-                 Adjusted_Mean_CI_Lower = Mean_CI_Lower,
-                 Adjusted_Mean_CI_Upper = Mean_CI_Upper,
-                 Adjusted_SD = SD,
-                 Adjusted_SE_SD = SE_SD,
-                 Adjusted_SD_CI_Lower = SD_CI_Lower,
-                 Adjusted_SD_CI_Upper = SD_CI_Upper),
-        by = c("Category", "Category_Value")
-      ) %>%
-      mutate(
-        country_name = paises$nome_pais[pais],
-        category_name = category_names[c],
-        # Mean differences
-        Mean_Difference = Adjusted_Mean - Original_Mean,
-        SE_Difference_Mean = sqrt(Original_SE_Mean^2 + Adjusted_SE_Mean^2),
-        CI_Lower_Diff_Mean = Mean_Difference - 1.96 * SE_Difference_Mean,
-        CI_Upper_Diff_Mean = Mean_Difference + 1.96 * SE_Difference_Mean,
-        # SD differences
-        SD_Difference = Adjusted_SD - Original_SD,
-        SE_Difference_SD = sqrt(Original_SE_SD^2 + Adjusted_SE_SD^2),
-        CI_Lower_Diff_SD = SD_Difference - 1.96 * SE_Difference_SD,
-        CI_Upper_Diff_SD = SD_Difference + 1.96 * SE_Difference_SD
-      ) %>%
-      select(country_name,
-            Category, Category_Value, category_name,
-             Original_Median, Adjusted_Median,
-             Original_Mean, Adjusted_Mean, Mean_Difference, SE_Difference_Mean, CI_Lower_Diff_Mean, CI_Upper_Diff_Mean,
-             Original_SD, Adjusted_SD, SD_Difference, SE_Difference_SD, CI_Lower_Diff_SD, CI_Upper_Diff_SD)
+      merged_results <- original_results %>%
+        filter(category_name == category_names[i]) %>%
+        rename(
+          Original_Median = Median,
+          Original_Mean = Mean,
+          Original_SE_Mean = SE_Mean,
+          Original_Mean_CI_Lower = Mean_CI_Lower,
+          Original_Mean_CI_Upper = Mean_CI_Upper,
+          Original_SD = SD,
+          Original_SE_SD = SE_SD,
+          Original_SD_CI_Lower = SD_CI_Lower,
+          Original_SD_CI_Upper = SD_CI_Upper
+        ) %>%
+        left_join(
+          adjusted_cat %>% rename(
+            Adjusted_Median = Median,
+            Adjusted_Mean = Mean,
+            Adjusted_SE_Mean = SE_Mean,
+            Adjusted_Mean_CI_Lower = Mean_CI_Lower,
+            Adjusted_Mean_CI_Upper = Mean_CI_Upper,
+            Adjusted_SD = SD,
+            Adjusted_SE_SD = SE_SD,
+            Adjusted_SD_CI_Lower = SD_CI_Lower,
+            Adjusted_SD_CI_Upper = SD_CI_Upper
+          ),
+          by = c("Category", "Category_Value", "category_name")
+        ) %>%
+        mutate(
+          country_name = paises$nome_pais[pais],
+          # Mean differences
+          Mean_Difference = Adjusted_Mean - Original_Mean,
+          SE_Difference_Mean = sqrt(Original_SE_Mean^2 + Adjusted_SE_Mean^2),
+          CI_Lower_Diff_Mean = Mean_Difference - 1.96 * SE_Difference_Mean,
+          CI_Upper_Diff_Mean = Mean_Difference + 1.96 * SE_Difference_Mean,
+          # SD differences
+          SD_Difference = Adjusted_SD - Original_SD,
+          SE_Difference_SD = sqrt(Original_SE_SD^2 + Adjusted_SE_SD^2),
+          CI_Lower_Diff_SD = SD_Difference - 1.96 * SE_Difference_SD,
+          CI_Upper_Diff_SD = SD_Difference + 1.96 * SE_Difference_SD
+        ) %>%
+        select(
+          country_name,
+          Category, Category_Value, category_name,
+          Original_Median, Adjusted_Median,
+          Original_Mean, Adjusted_Mean, Mean_Difference, SE_Difference_Mean, CI_Lower_Diff_Mean, CI_Upper_Diff_Mean,
+          Original_SD, Adjusted_SD, SD_Difference, SE_Difference_SD, CI_Lower_Diff_SD, CI_Upper_Diff_SD,
+          # Include all decile columns for original and adjusted incomes.
+          starts_with("Original_1º decil"), starts_with("Original_2º decil"),
+          starts_with("Original_3º decil"), starts_with("Original_4º decil"),
+          starts_with("Original_5º decil"), starts_with("Original_6º decil"),
+          starts_with("Original_7º decil"), starts_with("Original_8º decil"),
+          starts_with("Original_9º decil"), starts_with("Original_10º decil"),
+          starts_with("Adjusted_1º decil"), starts_with("Adjusted_2º decil"),
+          starts_with("Adjusted_3º decil"), starts_with("Adjusted_4º decil"),
+          starts_with("Adjusted_5º decil"), starts_with("Adjusted_6º decil"),
+          starts_with("Adjusted_7º decil"), starts_with("Adjusted_8º decil"),
+          starts_with("Adjusted_9º decil"), starts_with("Adjusted_10º decil")
+        )
 
-    results_df <- bind_rows(results_df, merged_results)
+      results_df <- bind_rows(results_df, merged_results)
+    }
   }
-}
+
   cat("Finished computing all income metrics.\n")
   return(results_df)
 }
@@ -163,7 +196,7 @@ income_results %>%
   filter(!Category_Value %in% c("","Homem ","Mulher ")) %>%
   mutate(Category_Value = if_else(Category_Value == "Overall", "Geral", Category_Value)) %>%
   mutate(Category_Value = fct_relevel(Category_Value, "Geral") %>% fct_rev())  %>%
-  saveRDS("./intermediarios/income_results_countries_sample.rds")
+  saveRDS("./intermediarios/income_results_countries_sample_with_age_and_deciles.rds")
 
 ### VERIFICATION: Ensure No Missing or Unexpected Values
 check_results <- function(results_df) {
