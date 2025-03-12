@@ -36,9 +36,9 @@ theme_minimal(base_size = 11) +
    panel.grid.major = element_blank(),
    panel.grid.minor = element_blank(),
    axis.line = element_line(size = .4, color = GRAY7),
-   axis.text = element_text(color = GRAY7),
-   axis.ticks.x = element_line(size = 0.5, color = GRAY7),
-   axis.ticks.y = element_line(size = 0.5, color = GRAY7),
+   axis.text = element_text(color = GRAY4),
+   axis.ticks.x = element_line(size = 0.5, color = GRAY4),
+   axis.ticks.y = element_line(size = 0.5, color = GRAY4),
    axis.title = element_text(color = GRAY3),
    axis.title.y = element_text(hjust = 1, margin = margin(0, 6, 0, 15, "pt")),
    axis.title.x = element_text(hjust = 0, margin = margin(6, 0, 15, 0, "pt")),
@@ -48,7 +48,7 @@ theme_minimal(base_size = 11) +
    plot.caption = element_text(hjust = 0, color = GRAY6),
    plot.caption.position = "plot",
    plot.margin = margin(.3,.3,.2,.2,"cm"),
-   strip.text = element_text(color = GRAY7),
+   strip.text = element_text(color = GRAY4),
    #text = element_text(family = "Arial")
    )
 }
